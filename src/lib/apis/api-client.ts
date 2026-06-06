@@ -83,6 +83,94 @@ export interface CreateCareDto {
   note?: string;
 }
 
+// ── Cat Photos ────────────────────────────────────────────────────────────
+export type MediaType = "PHOTO" | "VIDEO";
+export type MediaStatus = "PENDING" | "PROCESSING" | "DONE" | "FAILED";
+
+export interface Photo {
+  id: string;
+  ownerId: string;
+  mediaType: MediaType;
+  width: number | null;
+  height: number | null;
+  takenAt: string | null;
+  sortAt: string;
+  thumbUrl: string | null;
+  previewUrl: string | null;
+  videoUrl: string | null;
+  procStatus: MediaStatus;
+  aiStatus: MediaStatus;
+  catStatus: MediaStatus;
+  aiTags: string[];
+  aiCaption: string | null;
+  hasCat: boolean | null;
+  catNames: string[];
+  durationMs: number | null;
+  memo: string | null;
+  createdAt: string;
+}
+
+export interface PhotoPage {
+  items: Photo[];
+  nextCursor: string | null;
+}
+
+export interface GallerySummary {
+  ownerId: string;
+  ownerName: string;
+  isOwner: boolean;
+}
+
+export interface ShareMember {
+  memberUserId: string;
+  email: string;
+  name: string;
+  createdAt: string;
+}
+
+export interface CatSummary {
+  id: string;
+  name: string;
+  photoCount: number;
+  coverThumbUrl: string | null;
+}
+
+export interface UploadUrlDto {
+  mimeType: string;
+  sizeBytes: number;
+  ownerId?: string;
+}
+
+export interface UploadUrlResponse {
+  photoId: string;
+  key: string;
+  uploadUrl: string;
+  expiresAt: string;
+}
+
+export interface ConfirmPhotoDto {
+  key: string;
+  width?: number;
+  height?: number;
+  takenAt?: string;
+  originalFileName?: string;
+  memo?: string;
+}
+
+export interface UpdatePhotoDto {
+  memo?: string;
+  takenAt?: string;
+}
+
+export interface CreateCatDto {
+  name: string;
+  ownerId?: string;
+}
+
+export interface AddShareDto {
+  email: string;
+}
+
 export const api = {
   auth: {
     // Exchange Better Auth Session for App JWT
@@ -169,6 +257,141 @@ export const api = {
     deleteCare: async (careId: string) => {
       const response = await axiosInstance.delete(`/sitting/cares/${careId}`);
       return response.data;
+    },
+  },
+  catPhotos: {
+    photos: {
+      getUploadUrl: async (dto: UploadUrlDto) => {
+        const response = await axiosInstance.post<UploadUrlResponse>(
+          "/photos/upload-url",
+          dto
+        );
+        return response.data;
+      },
+      // ⚠️ Presigned S3 URL: plain fetch, NO Authorization header (axiosInstance
+      // would inject the Bearer token and break the signature). Content-Type only.
+      uploadToS3: async (uploadUrl: string, file: File) => {
+        const res = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type },
+          body: file,
+        });
+        if (!res.ok) {
+          throw new Error(`S3 업로드 실패 (${res.status})`);
+        }
+      },
+      confirm: async (photoId: string, dto: ConfirmPhotoDto) => {
+        const response = await axiosInstance.post<Photo>(
+          `/photos/${photoId}/confirm`,
+          dto
+        );
+        return response.data;
+      },
+      list: async (ownerId?: string, cursor?: string, limit?: number) => {
+        const response = await axiosInstance.get<PhotoPage>("/photos", {
+          params: { ownerId, cursor, limit },
+        });
+        return response.data;
+      },
+      get: async (photoId: string) => {
+        const response = await axiosInstance.get<Photo>(`/photos/${photoId}`);
+        return response.data;
+      },
+      search: async (q: string, ownerId?: string, limit?: number) => {
+        const response = await axiosInstance.get<Photo[]>("/photos/search", {
+          params: { q, ownerId, limit },
+        });
+        return response.data;
+      },
+      update: async (photoId: string, dto: UpdatePhotoDto) => {
+        const response = await axiosInstance.patch<Photo>(
+          `/photos/${photoId}`,
+          dto
+        );
+        return response.data;
+      },
+      retry: async (photoId: string) => {
+        const response = await axiosInstance.post<Photo>(
+          `/photos/${photoId}/retry`
+        );
+        return response.data;
+      },
+      remove: async (photoId: string) => {
+        const response = await axiosInstance.delete<{ ok: boolean }>(
+          `/photos/${photoId}`
+        );
+        return response.data;
+      },
+      addCat: async (photoId: string, catId: string) => {
+        const response = await axiosInstance.post<Photo>(
+          `/photos/${photoId}/cats`,
+          { catId }
+        );
+        return response.data;
+      },
+      removeCat: async (photoId: string, catId: string) => {
+        const response = await axiosInstance.delete<Photo>(
+          `/photos/${photoId}/cats/${catId}`
+        );
+        return response.data;
+      },
+    },
+    galleries: {
+      list: async () => {
+        const response = await axiosInstance.get<GallerySummary[]>("/galleries");
+        return response.data;
+      },
+      listShares: async () => {
+        const response = await axiosInstance.get<ShareMember[]>(
+          "/galleries/shares"
+        );
+        return response.data;
+      },
+      addShare: async (email: string) => {
+        const response = await axiosInstance.post<ShareMember>(
+          "/galleries/shares",
+          { email }
+        );
+        return response.data;
+      },
+      removeShare: async (memberUserId: string) => {
+        const response = await axiosInstance.delete<{ ok: boolean }>(
+          `/galleries/shares/${memberUserId}`
+        );
+        return response.data;
+      },
+    },
+    cats: {
+      list: async (ownerId?: string) => {
+        const response = await axiosInstance.get<CatSummary[]>("/cats", {
+          params: { ownerId },
+        });
+        return response.data;
+      },
+      create: async (dto: CreateCatDto) => {
+        const response = await axiosInstance.post<CatSummary>("/cats", dto);
+        return response.data;
+      },
+      rename: async (catId: string, name: string) => {
+        const response = await axiosInstance.patch<{ ok: boolean }>(
+          `/cats/${catId}`,
+          { name }
+        );
+        return response.data;
+      },
+      remove: async (catId: string) => {
+        const response = await axiosInstance.delete<{ ok: boolean }>(
+          `/cats/${catId}`
+        );
+        return response.data;
+      },
+      reindex: async (ownerId?: string) => {
+        const response = await axiosInstance.post<{ armed: number }>(
+          "/cats/reindex",
+          { ownerId }
+        );
+        return response.data;
+      },
     },
   },
 };
