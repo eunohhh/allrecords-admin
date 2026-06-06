@@ -14,8 +14,10 @@ import {
   type UpdatePhotoDto,
 } from '@/lib/apis/api-client';
 import {
+  convertHeicToJpeg,
   defaultTakenAt,
   isMediaSettling,
+  looksLikeHeic,
   readImageDimensions,
   readVideoMeta,
   validateUploadFile,
@@ -81,6 +83,7 @@ export function usePhoto(id: string | undefined, enabled: boolean) {
 // ── Upload orchestration ──────────────────────────────────────────────────
 export type UploadPhase =
   | 'idle'
+  | 'converting'
   | 'reading'
   | 'presigning'
   | 'uploading'
@@ -98,21 +101,31 @@ export function useUploadPhoto(ownerId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async ({ file, memo, takenAt, onPhase }: UploadPhotoVars) => {
+      // HEIC/HEIF → JPEG before anything else: browsers can't decode HEIC and
+      // the backend doesn't convert it (mirrors the mobile app). Keep the
+      // original file around for the takenAt default (the converted file's
+      // lastModified would be "now").
+      let uploadFile = file;
+      if (looksLikeHeic(file)) {
+        onPhase?.('converting');
+        uploadFile = await convertHeicToJpeg(file);
+      }
+
       onPhase?.('reading');
-      await validateUploadFile(file);
-      const meta = file.type.startsWith('video')
-        ? await readVideoMeta(file)
-        : await readImageDimensions(file);
+      await validateUploadFile(uploadFile);
+      const meta = uploadFile.type.startsWith('video')
+        ? await readVideoMeta(uploadFile)
+        : await readImageDimensions(uploadFile);
 
       onPhase?.('presigning');
       const presign = await api.catPhotos.photos.getUploadUrl({
-        mimeType: file.type,
-        sizeBytes: file.size,
+        mimeType: uploadFile.type,
+        sizeBytes: uploadFile.size,
         ownerId,
       });
 
       onPhase?.('uploading');
-      await api.catPhotos.photos.uploadToS3(presign.uploadUrl, file);
+      await api.catPhotos.photos.uploadToS3(presign.uploadUrl, uploadFile);
 
       onPhase?.('confirming');
       const photo = await api.catPhotos.photos.confirm(presign.photoId, {
@@ -120,7 +133,7 @@ export function useUploadPhoto(ownerId?: string) {
         width: meta.width,
         height: meta.height,
         takenAt: takenAt || defaultTakenAt(file),
-        originalFileName: file.name,
+        originalFileName: uploadFile.name,
         memo: memo || undefined,
       });
 

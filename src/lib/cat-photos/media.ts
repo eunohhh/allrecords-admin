@@ -2,12 +2,46 @@ import type { Photo } from '@/lib/apis/api-client';
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const VIDEO_TYPES = ['video/mp4', 'video/quicktime'];
+const HEIC_TYPES = ['image/heic', 'image/heif'];
 
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024; // 25MB
 const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // 200MB
 const MAX_VIDEO_DURATION_MS = 60 * 1000; // 60s
 
-export const ACCEPT_ATTR = [...IMAGE_TYPES, ...VIDEO_TYPES].join(',');
+// HEIC included so the file picker offers them; they are converted to JPEG
+// client-side before upload (browsers can't decode HEIC and the backend's
+// sharp(musl) build can't either — same approach as the mobile app).
+export const ACCEPT_ATTR = [...IMAGE_TYPES, ...HEIC_TYPES, '.heic', '.heif', ...VIDEO_TYPES].join(
+  ',',
+);
+
+const extOf = (name: string): string => name.split('.').pop()?.toLowerCase() ?? '';
+
+/**
+ * Cheap synchronous HEIC/HEIF check by mime or extension. Browsers often report
+ * an empty `File.type` for HEIC, so the extension fallback matters. Used to
+ * decide whether to run the (heavier) conversion before upload.
+ */
+export function looksLikeHeic(file: File): boolean {
+  const mime = file.type.toLowerCase();
+  if (HEIC_TYPES.includes(mime)) return true;
+  const ext = extOf(file.name);
+  return ext === 'heic' || ext === 'heif';
+}
+
+const renameToJpg = (name: string): string =>
+  name.includes('.') ? `${name.replace(/\.[^.]+$/, '')}.jpg` : `${name}.jpg`;
+
+/**
+ * Converts a HEIC/HEIF file to a JPEG File (quality 0.9, matching the mobile
+ * app). `heic-to` (libheif WASM) is dynamically imported so its bundle is only
+ * fetched when a HEIC file is actually selected.
+ */
+export async function convertHeicToJpeg(file: File): Promise<File> {
+  const { heicTo } = await import('heic-to');
+  const blob = await heicTo({ blob: file, type: 'image/jpeg', quality: 0.9 });
+  return new File([blob], renameToJpg(file.name), { type: 'image/jpeg' });
+}
 
 /**
  * Mirrors the backend polling helper: true while any pipeline stage for this

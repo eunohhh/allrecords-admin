@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { type UploadPhase, useUploadPhoto } from '@/hooks/cat-photos-queries';
-import { ACCEPT_ATTR, validateUploadFile } from '@/lib/cat-photos/media';
+import { ACCEPT_ATTR, looksLikeHeic, validateUploadFile } from '@/lib/cat-photos/media';
 import { getErrorMessage } from '@/lib/errors';
 
 interface UploadPhotoDialogProps {
@@ -25,6 +25,7 @@ interface UploadPhotoDialogProps {
 
 const PHASE_LABEL: Record<UploadPhase, string> = {
   idle: '',
+  converting: 'HEIC → JPEG 변환 중...',
   reading: '메타데이터 읽는 중...',
   presigning: '업로드 주소 발급 중...',
   uploading: 'S3 업로드 중...',
@@ -53,6 +54,12 @@ export function UploadPhotoDialog({ ownerId, open, onOpenChange }: UploadPhotoDi
     const picked = e.target.files?.[0] ?? null;
     if (!picked) {
       setFile(null);
+      return;
+    }
+    // HEIC is validated after client-side conversion (during upload), so skip
+    // the early whitelist check here — it would otherwise reject the picker.
+    if (looksLikeHeic(picked)) {
+      setFile(picked);
       return;
     }
     try {
@@ -107,7 +114,8 @@ export function UploadPhotoDialog({ ownerId, open, onOpenChange }: UploadPhotoDi
               disabled={uploadPhoto.isPending}
             />
             <p className="text-xs text-muted-foreground">
-              이미지 jpeg/png/webp(≤25MB), 영상 mp4/mov(≤200MB, ≤60초)
+              이미지 jpeg/png/webp/heic(≤25MB), 영상 mp4/mov(≤200MB, ≤60초). HEIC는 업로드 시 JPEG로
+              자동 변환됩니다.
             </p>
           </div>
           <div className="grid gap-2">
