@@ -11,6 +11,7 @@ import {
   EditCatDialog,
   EditPhotoDialog,
   galleryColumns,
+  LoadMoreSentinel,
   photoColumns,
   shareColumns,
   UploadPhotoDialog,
@@ -30,7 +31,7 @@ import {
   useDeleteCat,
   useDeletePhoto,
   useGalleries,
-  usePhotos,
+  useInfinitePhotos,
   useReindex,
   useRemoveShare,
   useShares,
@@ -62,9 +63,26 @@ export default function CatPhotosPage() {
 
   // Queries
   const { data: galleries } = useGalleries();
-  const { data: photos, isLoading: photosLoading } = usePhotos(ownerId);
+  const {
+    data: photoPages,
+    isLoading: photosLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfinitePhotos(ownerId);
   const { data: cats } = useCats(ownerId);
   const { data: shares, isLoading: sharesLoading } = useShares();
+
+  const photos = photoPages?.pages.flatMap((p) => p.items) ?? [];
+
+  // Whether the gallery currently selected at the top is owned by the admin.
+  // Share management always targets the admin's own gallery regardless of this.
+  const selectedGallery = galleries?.find((g) => g.ownerId === ownerId);
+  const viewingSharedGallery = selectedGallery ? !selectedGallery.isOwner : false;
+
+  const handleLoadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   // Mutations
   const deletePhoto = useDeletePhoto(ownerId);
@@ -225,12 +243,19 @@ export default function CatPhotosPage() {
             {photosLoading ? (
               <div>Loading...</div>
             ) : (
-              <DataTable
-                columns={photoColumns}
-                data={photos?.items ?? []}
-                onRowClick={handlePhotoClick}
-                onSelectionChange={handlePhotoSelection}
-              />
+              <>
+                <DataTable
+                  columns={photoColumns}
+                  data={photos}
+                  onRowClick={handlePhotoClick}
+                  onSelectionChange={handlePhotoSelection}
+                />
+                <LoadMoreSentinel
+                  hasMore={hasNextPage}
+                  loading={isFetchingNextPage}
+                  onLoadMore={handleLoadMore}
+                />
+              </>
             )}
           </div>
         </TabsContent>
@@ -287,8 +312,11 @@ export default function CatPhotosPage() {
             <div className="rounded-md border p-4">
               <div className="mb-4 flex items-center justify-between">
                 <div>
-                  <h2 className="text-xl font-semibold">공유 멤버</h2>
-                  <p className="text-sm text-muted-foreground">내 사진첩의 멤버 (소유자 전용)</p>
+                  <h2 className="text-xl font-semibold">내 사진첩 공유 멤버</h2>
+                  <p className="text-sm text-muted-foreground">
+                    공유 추가/해제는 상단 선택과 무관하게 항상 <strong>내 사진첩</strong>에만
+                    적용됩니다.
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button onClick={() => setAddShareOpen(true)}>
@@ -305,6 +333,12 @@ export default function CatPhotosPage() {
                   </Button>
                 </div>
               </div>
+              {viewingSharedGallery && (
+                <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+                  현재 상단에서 <strong>공유받은 사진첩</strong>을 보고 있습니다. 아래 멤버 목록과
+                  공유 관리는 다른 사람 사진첩이 아닌 <strong>내 사진첩</strong> 기준입니다.
+                </div>
+              )}
               {sharesLoading ? (
                 <div>Loading...</div>
               ) : (

@@ -1,4 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { QUERY_KEYS } from '@/constants/query-keys';
 import {
   api,
@@ -42,15 +48,20 @@ export function useCats(ownerId?: string) {
   });
 }
 
-export function usePhotos(ownerId?: string) {
-  return useQuery({
+const PHOTOS_PAGE_SIZE = 50;
+
+export function useInfinitePhotos(ownerId?: string) {
+  return useInfiniteQuery({
     queryKey: QUERY_KEYS.CAT_PHOTOS.PHOTOS(ownerId),
-    queryFn: () => api.catPhotos.photos.list(ownerId, undefined, 100),
+    queryFn: ({ pageParam }) => api.catPhotos.photos.list(ownerId, pageParam, PHOTOS_PAGE_SIZE),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: !!ownerId,
-    // Poll only while something is still processing; stop once everything settles.
+    // Poll only while something across the loaded pages is still processing.
     refetchInterval: (query) => {
-      const page = query.state.data as PhotoPage | undefined;
-      return page?.items.some(isMediaSettling) ? POLL_INTERVAL_MS : false;
+      const data = query.state.data as InfiniteData<PhotoPage> | undefined;
+      const settling = data?.pages.some((p) => p.items.some(isMediaSettling)) ?? false;
+      return settling ? POLL_INTERVAL_MS : false;
     },
   });
 }
