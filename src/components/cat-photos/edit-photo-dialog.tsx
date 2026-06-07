@@ -1,6 +1,5 @@
 'use client';
 
-import { format } from 'date-fns';
 import { useEffect, useId, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +23,7 @@ import {
   useUpdatePhoto,
 } from '@/hooks/cat-photos-queries';
 import type { CatSummary, MediaStatus, Photo } from '@/lib/apis/api-client';
+import { toLocalInput } from '@/lib/cat-photos/taken-at';
 import { getErrorMessage } from '@/lib/errors';
 import { StatusBadge } from './columns';
 
@@ -36,11 +36,6 @@ interface EditPhotoDialogProps {
 }
 
 const isFailed = (s: MediaStatus) => s === 'FAILED';
-
-function toLocalInput(iso: string | null): string {
-  if (!iso) return '';
-  return format(new Date(iso), "yyyy-MM-dd'T'HH:mm");
-}
 
 export function EditPhotoDialog({
   photo,

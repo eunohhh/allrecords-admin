@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,7 +15,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { type UploadPhase, useUploadPhoto } from '@/hooks/cat-photos-queries';
 import { ACCEPT_ATTR, looksLikeHeic, validateUploadFile } from '@/lib/cat-photos/media';
+import { inferTakenAt, toLocalInput } from '@/lib/cat-photos/taken-at';
 import { getErrorMessage } from '@/lib/errors';
+import { FileDropzone } from './file-dropzone';
 
 interface UploadPhotoDialogProps {
   ownerId?: string;
@@ -35,40 +37,49 @@ const PHASE_LABEL: Record<UploadPhase, string> = {
 
 export function UploadPhotoDialog({ ownerId, open, onOpenChange }: UploadPhotoDialogProps) {
   const uploadPhoto = useUploadPhoto(ownerId);
-  const fileId = useId();
   const takenAtId = useId();
   const memoId = useId();
   const [file, setFile] = useState<File | null>(null);
   const [memo, setMemo] = useState('');
   const [takenAt, setTakenAt] = useState('');
+  const [autoFilledTakenAt, setAutoFilledTakenAt] = useState(false);
   const [phase, setPhase] = useState<UploadPhase>('idle');
+  // Guards against out-of-order async inference: only the latest selection
+  // applies its inferTakenAt result.
+  const inferReqRef = useRef(0);
 
   const reset = () => {
     setFile(null);
     setMemo('');
     setTakenAt('');
+    setAutoFilledTakenAt(false);
     setPhase('idle');
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const picked = e.target.files?.[0] ?? null;
-    if (!picked) {
-      setFile(null);
-      return;
-    }
-    // HEIC is validated after client-side conversion (during upload), so skip
-    // the early whitelist check here — it would otherwise reject the picker.
-    if (looksLikeHeic(picked)) {
-      setFile(picked);
-      return;
-    }
+  const processFile = async (picked: File) => {
+    // Claim the latest token before validation so a rejected file still wins —
+    // a stale earlier inference can't fill a date for a file that was rejected.
+    const reqId = ++inferReqRef.current;
     try {
-      await validateUploadFile(picked);
+      // HEIC is validated after client-side conversion (during upload), so skip
+      // the early whitelist check here — it would otherwise reject the picker.
+      if (!looksLikeHeic(picked)) {
+        await validateUploadFile(picked);
+      }
       setFile(picked);
     } catch (err) {
-      setFile(null);
-      e.target.value = '';
       toast.error(getErrorMessage(err));
+      return;
+    }
+    // Only infer when the user hasn't typed their own value; a previously
+    // auto-filled value may be overwritten by the new file.
+    if (takenAt === '' || autoFilledTakenAt) {
+      const inferred = await inferTakenAt(picked);
+      // Discard if a newer selection has since started — avoids out-of-order clobber.
+      if (inferred && reqId === inferReqRef.current) {
+        setTakenAt(toLocalInput(inferred));
+        setAutoFilledTakenAt(true);
+      }
     }
   };
 
@@ -105,13 +116,14 @@ export function UploadPhotoDialog({ ownerId, open, onOpenChange }: UploadPhotoDi
         </DialogHeader>
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
-            <Label htmlFor={fileId}>파일 *</Label>
-            <Input
-              id={fileId}
-              type="file"
+            {/* No htmlFor: the dropzone is a <button> with its own aria-label,
+                not a labelable form control. Label is visual only. */}
+            <Label>파일 *</Label>
+            <FileDropzone
+              file={file}
               accept={ACCEPT_ATTR}
-              onChange={handleFileChange}
               disabled={uploadPhoto.isPending}
+              onFile={processFile}
             />
             <p className="text-xs text-muted-foreground">
               이미지 jpeg/png/webp/heic(≤25MB), 영상 mp4/mov(≤200MB, ≤60초). HEIC는 업로드 시 JPEG로
@@ -124,10 +136,17 @@ export function UploadPhotoDialog({ ownerId, open, onOpenChange }: UploadPhotoDi
               id={takenAtId}
               type="datetime-local"
               value={takenAt}
-              onChange={(e) => setTakenAt(e.target.value)}
+              onChange={(e) => {
+                setTakenAt(e.target.value);
+                setAutoFilledTakenAt(false);
+              }}
               disabled={uploadPhoto.isPending}
             />
-            <p className="text-xs text-muted-foreground">비우면 파일 수정일을 사용합니다.</p>
+            <p className="text-xs text-muted-foreground">
+              {autoFilledTakenAt
+                ? '파일에서 촬영일을 자동으로 채웠어요. 필요하면 수정하세요.'
+                : '비우면 파일 수정일을 사용합니다.'}
+            </p>
           </div>
           <div className="grid gap-2">
             <Label htmlFor={memoId}>메모 (선택)</Label>
